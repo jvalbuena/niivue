@@ -54,3 +54,6 @@ packages/niivue/public/
 
 # dynamic API docs
 packages/docs/docs/api
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md

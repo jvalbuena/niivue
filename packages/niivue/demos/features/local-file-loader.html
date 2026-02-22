@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        background: #808080;
+        color: black;
+        margin: 0; padding: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      header {
+        display: flex;
+        justify-content: flex-start;
+        padding: 5px;
+        background-color: #a0a0a0;
+        flex-shrink: 0;
+        flex-wrap: nowrap;
+        z-index: 10;
+        white-space: nowrap;
+      }
+
+      .dropbtn {
+        background-color: #a0a0a0;
+        color: black;
+        padding: 6px 12px;
+        font-size: 14px;
+        border: none;
+        cursor: pointer;
+      }
+      .dropbtn:hover, .dropbtn:focus { background-color: #b0b0b0; }
+      .dropbtn.active { background-color: #c8e6c9; font-weight: bold; }
+
+      .dropdown { position: relative; display: inline-block; margin-right: 5px; }
+      .dropdown-content {
+        display: none; position: absolute;
+        background-color: #f9f9f9; min-width: 175px;
+        box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+        z-index: 100; max-height: calc(100vh - 60px); overflow-y: auto;
+      }
+      .dropdown-content a {
+        color: black; padding: 8px 12px; text-decoration: none;
+        display: flex; align-items: center; font-size: 13px;
+      }
+      .dropdown-content a:hover { background-color: #ddd; }
+      .dropdown:hover .dropdown-content { display: block; }
+
+      .dropdown-item-checked:before { content: '\2713\0020'; font-weight: bold; }
+      .divider { border-top: 1px solid #bbb; margin-top: 4px; padding-top: 4px; }
+
+      .color-dot {
+        display: inline-block; width: 11px; height: 11px;
+        border-radius: 50%; margin-right: 7px; flex-shrink: 0;
+        border: 1px solid rgba(0,0,0,0.25);
+      }
+
+      main#container {
+        display: flex; flex-grow: 1;
+        position: relative; background-color: black; min-height: 0;
+      }
+
+      canvas {
+        position: absolute; top: 0; left: 0;
+        width: 100%; height: 100%;
+        display: block; cursor: crosshair;
+      }
+      canvas:focus { outline: 0px; }
+
+      /* SVG annotation overlay — sits on top of the WebGL canvas */
+      #annot-svg {
+        position: absolute; top: 0; left: 0;
+        width: 100%; height: 100%;
+        pointer-events: none;   /* off by default; enabled in annotate mode */
+        overflow: visible;
+        z-index: 4;
+      }
+      #annot-svg.active { pointer-events: all; cursor: crosshair; }
+
+      /* empty-state overlay */
+      #drop-overlay {
+        position: absolute; top: 0; left: 0;
+        width: 100%; height: 100%;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        color: #aaa; pointer-events: none; z-index: 5; gap: 12px;
+      }
+      #drop-overlay .drop-icon { font-size: 64px; line-height: 1; }
+      #drop-overlay .drop-title { font-size: 20px; font-weight: bold; }
+      #drop-overlay .drop-sub {
+        font-size: 13px; text-align: center; line-height: 1.6; max-width: 320px;
+      }
+      #drop-overlay .drop-btn {
+        pointer-events: all; background: #444; color: #eee;
+        border: 1px solid #666; padding: 8px 20px; font-size: 14px;
+        border-radius: 4px; cursor: pointer; margin-top: 4px;
+      }
+      #drop-overlay .drop-btn:hover { background: #555; }
+
+      /* annotation text dialog */
+      #annot-dialog {
+        display: none; position: fixed; z-index: 200;
+        background: #fff; border: 1px solid #999; border-radius: 6px;
+        padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        min-width: 230px;
+      }
+      #annot-dialog label { display: block; font-size: 12px; color: #444; margin-bottom: 4px; }
+      #annot-input {
+        width: 100%; padding: 5px 7px; font-size: 13px;
+        border: 1px solid #aaa; border-radius: 3px;
+        box-sizing: border-box; margin-bottom: 8px;
+      }
+      #annot-input:focus { outline: none; border-color: #4a90d9; }
+      .annot-btns { display: flex; gap: 6px; justify-content: flex-end; }
+      .annot-btns button {
+        padding: 4px 14px; font-size: 13px;
+        border-radius: 3px; border: 1px solid #aaa; cursor: pointer;
+      }
+      #annot-add { background: #4a90d9; color: #fff; border-color: #3a80c9; }
+      #annot-add:hover { background: #3a80c9; }
+      #annot-cancel:hover { background: #eee; }
+
+      footer {
+        background-color: #a0a0a0; color: black; font-size: 12px;
+        padding: 2px 5px; flex-shrink: 0;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      }
+    </style>
+    <title>Load Local Files</title>
+  </head>
+  <body>
+    <header>
+      <!-- File -->
+      <div class="dropdown">
+        <button class="dropbtn">File</button>
+        <div class="dropdown-content">
+          <a class="viewBtn" id="OpenFile">Open File(s)…</a>
+          <a class="viewBtn divider" id="AddFile">Add Overlay File…</a>
+          <a class="viewBtn divider" id="SaveDraw">Save Drawing</a>
+          <a class="viewBtn" id="CloseDraw">Close Drawing</a>
+          <a class="viewBtn divider" id="SaveBitmap">Screenshot</a>
+          <a class="viewBtn" id="ShowHeader">Show Header</a>
+          <a class="viewBtn divider" href="https://github.com/niivue/niivue">About</a>
+        </div>
+      </div>
+
+      <!-- Edit -->
+      <div class="dropdown">
+        <button class="dropbtn">Edit</button>
+        <div class="dropdown-content">
+          <a class="viewBtn" id="Undo" accesskey="z">Undo Draw ^Z</a>
+        </div>
+      </div>
+
+      <!-- View -->
+      <div class="dropdown">
+        <button class="dropbtn">View</button>
+        <div class="dropdown-content">
+          <a class="viewBtn" id="|Axial">Axial</a>
+          <a class="viewBtn" id="|Sagittal">Sagittal</a>
+          <a class="viewBtn" id="|Coronal">Coronal</a>
+          <a class="viewBtn" id="|Render">Render</a>
+          <a class="viewBtn" id="|MultiPlanar">A+C+S</a>
+          <a class="viewBtn dropdown-item-checked" id="|MultiPlanarRender">A+C+S+R</a>
+          <a class="viewBtn divider" id="Colorbar">Colorbar</a>
+          <a class="viewBtn" id="Radiological">Radiological</a>
+          <a class="viewBtn dropdown-item-checked" id="Crosshair">Render Crosshair</a>
+          <a class="viewBtn" id="ClipPlane">Render Clip Plane</a>
+          <a class="viewBtn dropdown-item-checked" id="WorldSpace">World Space</a>
+          <a class="viewBtn dropdown-item-checked" id="Interpolate">Smooth Interpolation</a>
+        </div>
+      </div>
+
+      <!-- Color -->
+      <div class="dropdown">
+        <button class="dropbtn">Color</button>
+        <div class="dropdown-content">
+          <a class="viewBtn dropdown-item-checked" id="!gray">Gray</a>
+          <a class="viewBtn" id="!plasma">Plasma</a>
+          <a class="viewBtn" id="!viridis">Viridis</a>
+          <a class="viewBtn" id="!inferno">Inferno</a>
+          <a class="viewBtn" id="!hot">Hot</a>
+          <a class="viewBtn divider" id="BackColor">Light Background</a>
+        </div>
+      </div>
+
+      <!-- Draw -->
+      <div class="dropdown">
+        <button class="dropbtn">Draw</button>
+        <div class="dropdown-content">
+          <a class="viewBtn dropdown-item-checked" id="@Off" accesskey="0">Off ^0</a>
+          <a class="viewBtn" id="@Red" accesskey="1">Red ^1</a>
+          <a class="viewBtn" id="@Green" accesskey="2">Green ^2</a>
+          <a class="viewBtn" id="@Blue" accesskey="3">Blue ^3</a>
+          <a class="viewBtn" id="@Yellow" accesskey="4">Yellow ^4</a>
+          <a class="viewBtn" id="@Cyan" accesskey="5">Cyan ^5</a>
+          <a class="viewBtn" id="@Purple" accesskey="6">Purple ^6</a>
+          <a class="viewBtn" id="@Erase" accesskey="7">Erase ^7</a>
+          <a class="viewBtn divider dropdown-item-checked" id="DrawFilled" accesskey="f">Fill Outline ^F</a>
+          <a class="viewBtn dropdown-item-checked" id="DrawOverwrite" accesskey="o">Pen Overwrites ^O</a>
+          <a class="viewBtn dropdown-item-checked" id="Translucent" accesskey="t">Translucent ^T</a>
+          <a class="viewBtn divider dropdown-item-checked" id="PenType-pen" accesskey="p">Pen ^P</a>
+          <a class="viewBtn" id="PenType-rectangle" accesskey="r">Rectangle ^R</a>
+          <a class="viewBtn" id="PenType-ellipse" accesskey="e">Ellipse ^E</a>
+          <a class="viewBtn divider" id="Growcut">Grow Cut</a>
+          <a class="viewBtn" id="DrawOtsu">Otsu Segment</a>
+        </div>
+      </div>
+
+      <!-- Annotate -->
+      <div class="dropdown">
+        <button class="dropbtn" id="annotate-menu-btn">Annotate</button>
+        <div class="dropdown-content">
+          <a class="viewBtn" id="AnnotateToggle">&#9998; Enable Annotate Mode</a>
+          <a class="viewBtn divider dropdown-item-checked" id="AC-red">
+            <span class="color-dot" style="background:#ff3333"></span>Red
+          </a>
+          <a class="viewBtn" id="AC-green">
+            <span class="color-dot" style="background:#33cc33"></span>Green
+          </a>
+          <a class="viewBtn" id="AC-blue">
+            <span class="color-dot" style="background:#3388ff"></span>Blue
+          </a>
+          <a class="viewBtn" id="AC-cyan">
+            <span class="color-dot" style="background:#00cccc"></span>Cyan
+          </a>
+          <a class="viewBtn divider" id="AnnotateUndo">Undo Last Annotation</a>
+          <a class="viewBtn" id="AnnotateClear">Clear All Annotations</a>
+        </div>
+      </div>
+
+      <!-- Drag -->
+      <div class="dropdown">
+        <button class="dropbtn">Drag</button>
+        <div class="dropdown-content">
+          <a class="viewBtn dropdown-item-checked" id="^contrast">Contrast</a>
+          <a class="viewBtn" id="^measurement">Measurement</a>
+          <a class="viewBtn" id="^pan">Pan/Zoom</a>
+          <a class="viewBtn" id="^none">None</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="container">
+      <canvas id="gl1"></canvas>
+
+      <!-- SVG arrow annotation overlay -->
+      <svg id="annot-svg" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ah-red"   markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff3333"/></marker>
+          <marker id="ah-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#33cc33"/></marker>
+          <marker id="ah-blue"  markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3388ff"/></marker>
+          <marker id="ah-cyan"  markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#00cccc"/></marker>
+        </defs>
+      </svg>
+
+      <!-- empty-state prompt -->
+      <div id="drop-overlay">
+        <div class="drop-icon">&#128194;</div>
+        <div class="drop-title">No image loaded</div>
+        <div class="drop-sub">
+          Drop a NIfTI, NRRD, MGH, AFNI, or mesh file here,<br/>
+          or use the button below.<br/>
+          <em>Shift+Drop</em> to add as overlay.
+        </div>
+        <button class="drop-btn" id="OpenFileBig">Open File(s)…</button>
+      </div>
+    </main>
+
+    <footer id="intensity">&nbsp;</footer>
+
+    <!-- annotation text dialog -->
+    <div id="annot-dialog">
+      <label>Annotation label:</label>
+      <input type="text" id="annot-input" placeholder="Type label and press Enter…" autocomplete="off"/>
+      <div class="annot-btns">
+        <button id="annot-cancel">Cancel</button>
+        <button id="annot-add">Add ↵</button>
+      </div>
+    </div>
+
+    <!-- hidden file inputs -->
+    <input type="file" id="fileInputReplace" style="display:none" multiple
+      accept=".nii,.nii.gz,.nrrd,.mgh,.mgz,.mif,.hdr,.img,.head,.brik,.gz,
+              .trk,.tck,.trx,.gii,.mz3,.obj,.vtk,.ply,.stl,.fsz,.annot,.label,.curv,.sulc,.thickness"/>
+    <input type="file" id="fileInputAdd" style="display:none" multiple
+      accept=".nii,.nii.gz,.nrrd,.mgh,.mgz,.mif,.hdr,.img,.head,.brik,.gz,
+              .trk,.tck,.trx,.gii,.mz3,.obj,.vtk,.ply,.stl,.fsz,.annot,.label,.curv,.sulc,.thickness"/>
+  </body>
+</html>
+<script type="module" async>
+  import * as niivue from '../dist/index.js'
+
+  // ─── drawing state ────────────────────────────────────────────────────────
+  let isFilled = true
+
+  // ─── annotation state ─────────────────────────────────────────────────────
+  let annotateMode   = false
+  let prevDragMode   = null
+  let pendingClick   = null      // {ax, ay} pixel coords of the anatomy point
+  let annotationId   = 0
+  let annotations    = []        // [{id, groupEl}]
+
+  const COLORS = {
+    red:   { stroke: '#ff3333', marker: 'ah-red'   },
+    green: { stroke: '#33cc33', marker: 'ah-green' },
+    blue:  { stroke: '#3388ff', marker: 'ah-blue'  },
+    cyan:  { stroke: '#00cccc', marker: 'ah-cyan'  },
+  }
+  let activeColorKey = 'red'
+
+  // ─── NiiVue ───────────────────────────────────────────────────────────────
+  const nv1 = new niivue.Niivue({
+    dragAndDropEnabled: true,
+    backColor: [0, 0, 0, 1],
+    textHeight: 0.03,
+    show3Dcrosshair: true,
+    onLocationChange: (data) => {
+      document.getElementById('intensity').innerHTML = '&nbsp;' + data.string
+    },
+    onImageLoaded: () => {
+      document.getElementById('drop-overlay').style.display = 'none'
+      nv1.closeDrawing()
+      document.getElementById('@Off')?.click()
+      if (nv1.volumes.length > 0) toggleGroup('!' + nv1.volumes[0].colormap)
+    },
+  })
+  nv1.opts.isColorbar    = false
+  nv1.opts.legendTextColor = [1, 1, 1, 1]
+  nv1.opts.fontColor       = [1, 1, 1, 1]
+  nv1.opts.crosshairColor  = [0, 0.4, 1, 1]
+  nv1.setRadiologicalConvention(false)
+  await nv1.attachTo('gl1')
+  nv1.setClipPlane([0.3, 270, 0])
+  nv1.setRenderAzimuthElevation(120, 10)
+  nv1.setSliceType(nv1.sliceTypeMultiplanar)
+  nv1.opts.multiplanarShowRender = niivue.SHOW_RENDER.ALWAYS
+  nv1.setSliceMM(true)
+  nv1.graph.autoSizeMultiplanar = true
+  nv1.drawOpacity    = 0.3
+  nv1.drawRimOpacity = 1.0
+
+  // ─── file inputs ─────────────────────────────────────────────────────────
+  document.getElementById('fileInputReplace').addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files); if (!files.length) return
+    e.target.value = ''; nv1.meshes = []
+    for (const f of files) await nv1.loadFromFile(f)
+  })
+  document.getElementById('fileInputAdd').addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files); if (!files.length) return
+    e.target.value = ''
+    for (const f of files) await nv1.loadFromFile(f)
+  })
+  document.getElementById('OpenFileBig').addEventListener('click', () =>
+    document.getElementById('fileInputReplace').click())
+
+  // ─── SVG arrow annotations ────────────────────────────────────────────────
+  const svg = document.getElementById('annot-svg')
+
+  // Convert a mouse event to SVG coordinate space
+  function svgCoords(e) {
+    const rect = svg.getBoundingClientRect()
+    return {
+      x: (e.clientX - rect.left) * (svg.viewBox.baseVal.width  || rect.width)  / rect.width,
+      y: (e.clientY - rect.top)  * (svg.viewBox.baseVal.height || rect.height) / rect.height,
+    }
+  }
+
+  // Smart offset: push text away from the nearest canvas edge
+  function tailPos(ax, ay) {
+    const rect  = svg.getBoundingClientRect()
+    const W = rect.width, H = rect.height
+    const DIST = 72
+    const dx = ax < W / 2 ? +DIST : -DIST
+    const dy = ay < H / 2 ? +DIST : -DIST
+    return { tx: ax + dx, ty: ay + dy, dx, dy }
+  }
+
+  svg.addEventListener('click', (e) => {
+    if (!annotateMode) return
+    e.stopPropagation()
+    const rect = svg.getBoundingClientRect()
+    pendingClick = { ax: e.clientX - rect.left, ay: e.clientY - rect.top }
+    showAnnotDialog(e.clientX, e.clientY)
+  })
+
+  function showAnnotDialog(clientX, clientY) {
+    const dlg = document.getElementById('annot-dialog')
+    // keep dialog on-screen
+    const W = window.innerWidth, H = window.innerHeight
+    let left = clientX + 16, top = clientY + 16
+    if (left + 250 > W) left = clientX - 260
+    if (top  + 110 > H) top  = clientY - 120
+    dlg.style.left    = left + 'px'
+    dlg.style.top     = top  + 'px'
+    dlg.style.display = 'block'
+    const inp = document.getElementById('annot-input')
+    inp.value = ''
+    inp.focus()
+  }
+
+  function hideAnnotDialog() {
+    document.getElementById('annot-dialog').style.display = 'none'
+    pendingClick = null
+  }
+
+  function commitAnnotation() {
+    const text  = document.getElementById('annot-input').value.trim()
+    const click = pendingClick          // capture before hideAnnotDialog clears it
+    hideAnnotDialog()
+    if (!text || !click) return
+
+    const { ax, ay }    = click
+    const { tx, ty, dx } = tailPos(ax, ay)
+    const col            = COLORS[activeColorKey]
+    const id             = ++annotationId
+
+    const ns = 'http://www.w3.org/2000/svg'
+
+    const g = document.createElementNS(ns, 'g')
+    g.setAttribute('id', 'annot-' + id)
+
+    // arrow line: from tail → anatomy point (arrowhead at anatomy end)
+    const line = document.createElementNS(ns, 'line')
+    line.setAttribute('x1', tx); line.setAttribute('y1', ty)
+    line.setAttribute('x2', ax); line.setAttribute('y2', ay)
+    line.setAttribute('stroke', col.stroke)
+    line.setAttribute('stroke-width', '2')
+    line.setAttribute('marker-end', `url(#${col.marker})`)
+    g.appendChild(line)
+
+    // measure text to size the background rect
+    const FONT_SIZE = 13
+    const charW     = FONT_SIZE * 0.58
+    const boxW      = text.length * charW + 8
+    const boxH      = FONT_SIZE + 8
+    const anchor    = dx > 0 ? 'start' : 'end'
+    const rectX     = dx > 0 ? tx - 1 : tx - boxW + 1
+
+    // label background (improves readability over bright images)
+    const bg = document.createElementNS(ns, 'rect')
+    bg.setAttribute('x', rectX); bg.setAttribute('y', ty - FONT_SIZE - 2)
+    bg.setAttribute('width', boxW); bg.setAttribute('height', boxH)
+    bg.setAttribute('rx', '3')
+    bg.setAttribute('fill', 'rgba(0,0,0,0.55)')
+    g.appendChild(bg)
+
+    // label text
+    const txt = document.createElementNS(ns, 'text')
+    txt.setAttribute('x', tx); txt.setAttribute('y', ty)
+    txt.setAttribute('fill', col.stroke)
+    txt.setAttribute('font-size', FONT_SIZE)
+    txt.setAttribute('font-family', 'Arial, sans-serif')
+    txt.setAttribute('font-weight', 'bold')
+    txt.setAttribute('text-anchor', anchor)
+    txt.textContent = text
+    g.appendChild(txt)
+
+    svg.appendChild(g)
+    annotations.push({ id, groupEl: g })
+  }
+
+  document.getElementById('annot-add').addEventListener('click', commitAnnotation)
+  document.getElementById('annot-cancel').addEventListener('click', hideAnnotDialog)
+  document.getElementById('annot-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter')  { e.preventDefault(); commitAnnotation() }
+    if (e.key === 'Escape') { e.preventDefault(); hideAnnotDialog() }
+  })
+
+  // ─── composite screenshot (WebGL canvas + SVG overlay) ────────────────────
+  async function saveAnnotatedScreenshot() {
+    const glCanvas = document.getElementById('gl1')
+    const svgEl    = document.getElementById('annot-svg')
+
+    // ensure the WebGL canvas is freshly rendered
+    nv1.drawScene()
+
+    const cw      = glCanvas.width
+    const ch      = glCanvas.height
+    const svgRect = svgEl.getBoundingClientRect()
+
+    // build composite canvas at native WebGL resolution
+    const out = document.createElement('canvas')
+    out.width  = cw
+    out.height = ch
+    const ctx  = out.getContext('2d')
+
+    // layer 1 — WebGL image
+    ctx.drawImage(glCanvas, 0, 0)
+
+    // layer 2 — SVG arrows (clone and give explicit px dimensions so the
+    //           browser knows how large to render it as an image)
+    const clone = svgEl.cloneNode(true)
+    clone.setAttribute('width',  svgRect.width)
+    clone.setAttribute('height', svgRect.height)
+    const svgStr  = new XMLSerializer().serializeToString(clone)
+    const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
+    const svgUrl  = URL.createObjectURL(svgBlob)
+
+    await new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, cw, ch)
+        URL.revokeObjectURL(svgUrl)
+        resolve()
+      }
+      img.onerror = reject
+      img.src = svgUrl
+    })
+
+    const a    = document.createElement('a')
+    a.download = 'screenshot.png'
+    a.href     = out.toDataURL('image/png')
+    a.click()
+  }
+
+  // ─── helpers ──────────────────────────────────────────────────────────────
+  // Annotate colour items need their own toggle — they share the 'A' prefix
+  // with AnnotateToggle/Undo/Clear so generic toggleGroup would clobber those.
+  const ANNOT_COLOR_IDS = ['AC-red', 'AC-green', 'AC-blue', 'AC-cyan']
+  function setAnnotateColorActive(key) {
+    ANNOT_COLOR_IDS.forEach(id =>
+      document.getElementById(id)?.classList.remove('dropdown-item-checked'))
+    document.getElementById('AC-' + key)?.classList.add('dropdown-item-checked')
+  }
+  function toggleGroup(id) {
+    const char0   = id.charAt(0)
+    const buttons = document.getElementsByClassName('viewBtn')
+    for (let i = 0; i < buttons.length; i++) {
+      if (buttons[i].classList.contains('divider')) continue
+      if (!buttons[i].id || buttons[i].id.charAt(0) !== char0) continue
+      buttons[i].classList.remove('dropdown-item-checked')
+    }
+    document.getElementById(id)?.classList.add('dropdown-item-checked')
+  }
+
+  function setAnnotateMode(on) {
+    annotateMode = on
+    const menuBtn   = document.getElementById('annotate-menu-btn')
+    const toggleBtn = document.getElementById('AnnotateToggle')
+
+    if (on) {
+      prevDragMode = nv1.opts.dragMode
+      nv1.setDrawingEnabled(false)
+      nv1.opts.dragMode = nv1.dragModes.none
+      svg.classList.add('active')
+      menuBtn.classList.add('active')
+      menuBtn.textContent = 'Annotate ●'
+      toggleBtn.textContent = '✖ Disable Annotate Mode'
+      toggleBtn.classList.add('dropdown-item-checked')
+    } else {
+      nv1.opts.dragMode = prevDragMode ?? nv1.dragModes.contrast
+      svg.classList.remove('active')
+      menuBtn.classList.remove('active')
+      menuBtn.textContent = 'Annotate'
+      toggleBtn.textContent = '✎ Enable Annotate Mode'
+      toggleBtn.classList.remove('dropdown-item-checked')
+      hideAnnotDialog()
+    }
+  }
+
+  // ─── main button handler ──────────────────────────────────────────────────
+  async function onButtonClick(e) {
+    const id = e.target.id
+    const el = e.target
+    let handled = false
+
+    switch (id) {
+      // File
+      case 'OpenFile':   document.getElementById('fileInputReplace').click(); handled = true; break
+      case 'AddFile':    document.getElementById('fileInputAdd').click();     handled = true; break
+      case 'SaveDraw':   nv1.saveImage({ filename: 'drawing.nii', isSaveDrawing: true }); handled = true; break
+      case 'CloseDraw':  nv1.closeDrawing(); document.getElementById('@Off')?.click(); handled = true; break
+      case 'SaveBitmap': await saveAnnotatedScreenshot(); handled = true; break
+      case 'ShowHeader':
+        alert(nv1.volumes.length > 0 ? nv1.volumes[0].hdr.toFormattedString() : 'No volume loaded.')
+        handled = true; break
+
+      // Edit
+      case 'Undo': nv1.drawUndo(); handled = true; break
+
+      // View
+      case 'Colorbar':
+        nv1.opts.isColorbar = !nv1.opts.isColorbar; el.classList.toggle('dropdown-item-checked'); nv1.drawScene(); handled = true; break
+      case 'Radiological':
+        nv1.opts.isRadiologicalConvention = !nv1.opts.isRadiologicalConvention; el.classList.toggle('dropdown-item-checked'); nv1.drawScene(); handled = true; break
+      case 'Crosshair':
+        nv1.opts.show3Dcrosshair = !nv1.opts.show3Dcrosshair; el.classList.toggle('dropdown-item-checked'); nv1.drawScene(); handled = true; break
+      case 'ClipPlane':
+        nv1.setClipPlane(nv1.scene.clipPlaneDepthAziElevs[0] > 1.8 ? [0.3,270,0] : [2,270,0]); handled = true; break
+      case 'WorldSpace':
+        nv1.setSliceMM(!nv1.opts.isSliceMM); el.classList.toggle('dropdown-item-checked'); handled = true; break
+      case 'Interpolate':
+        nv1.setInterpolation(!nv1.opts.isNearestInterpolation); el.classList.toggle('dropdown-item-checked'); handled = true; break
+      case 'BackColor':
+        if (nv1.opts.backColor[0] > 0.5) {
+          nv1.opts.backColor = [0,0,0,1]; nv1.opts.legendTextColor = nv1.opts.fontColor = [1,1,1,1]; el.textContent = 'Light Background'
+        } else {
+          nv1.opts.backColor = [0.85,0.85,0.85,1]; nv1.opts.legendTextColor = nv1.opts.fontColor = [0,0,0,1]; el.textContent = 'Dark Background'
+        }
+        el.classList.toggle('dropdown-item-checked'); nv1.drawScene(); handled = true; break
+
+      // Draw
+      case 'Translucent':  nv1.drawOpacity = nv1.drawOpacity > 0.75 ? 0.5 : 1.0; el.classList.toggle('dropdown-item-checked'); nv1.drawScene(); handled = true; break
+      case 'DrawFilled':   isFilled = !isFilled; nv1.setPenValue(nv1.opts.penValue, isFilled); el.classList.toggle('dropdown-item-checked'); handled = true; break
+      case 'DrawOverwrite': nv1.drawFillOverwrites = !nv1.drawFillOverwrites; el.classList.toggle('dropdown-item-checked'); handled = true; break
+      case 'PenType-pen':       nv1.document.opts.penType = niivue.PEN_TYPE.PEN;       toggleGroup('PenType-pen');       handled = true; break
+      case 'PenType-rectangle': nv1.document.opts.penType = niivue.PEN_TYPE.RECTANGLE; toggleGroup('PenType-rectangle'); handled = true; break
+      case 'PenType-ellipse':   nv1.document.opts.penType = niivue.PEN_TYPE.ELLIPSE;   toggleGroup('PenType-ellipse');   handled = true; break
+      case 'Growcut':  nv1.drawGrowCut(); handled = true; break
+      case 'DrawOtsu': { const lv = parseInt(prompt('Classes (2..4)', '3')); if (!isNaN(lv)) nv1.drawOtsu(lv); handled = true; break }
+
+      // Annotate
+      case 'AnnotateToggle': setAnnotateMode(!annotateMode); handled = true; break
+      case 'AC-red':   activeColorKey = 'red';   setAnnotateColorActive('red');   handled = true; break
+      case 'AC-green': activeColorKey = 'green'; setAnnotateColorActive('green'); handled = true; break
+      case 'AC-blue':  activeColorKey = 'blue';  setAnnotateColorActive('blue');  handled = true; break
+      case 'AC-cyan':  activeColorKey = 'cyan';  setAnnotateColorActive('cyan');  handled = true; break
+      case 'AnnotateUndo':
+        if (annotations.length > 0) { const last = annotations.pop(); last.groupEl.remove() }
+        handled = true; break
+      case 'AnnotateClear':
+        if (annotations.length > 0 && confirm('Remove all annotations?')) {
+          annotations.forEach(a => a.groupEl.remove()); annotations = []
+        }
+        handled = true; break
+
+      default: break
+    }
+
+    if (!handled) {
+      if (id.startsWith('!')) {
+        if (nv1.volumes.length > 0) { nv1.volumes[0].colormap = id.slice(1); nv1.updateGLVolume(); toggleGroup(id) }
+      } else if (id.startsWith('@')) {
+        if (annotateMode) setAnnotateMode(false)
+        nv1.opts.clickToSegment = false
+        let pv = nv1.opts.penValue, de = true
+        switch(id) { case '@Off': de=false; break; case '@Erase': pv=0; break; case '@Red': pv=1; break; case '@Green': pv=2; break; case '@Blue': pv=3; break; case '@Yellow': pv=4; break; case '@Cyan': pv=5; break; case '@Purple': pv=6; break; }
+        nv1.setDrawingEnabled(de); if (id !== '@Off') nv1.setPenValue(pv, isFilled); toggleGroup(id)
+      } else if (id.startsWith('|')) {
+        switch(id) {
+          case '|Axial':            nv1.setSliceType(nv1.sliceTypeAxial); break
+          case '|Coronal':          nv1.setSliceType(nv1.sliceTypeCoronal); break
+          case '|Sagittal':         nv1.setSliceType(nv1.sliceTypeSagittal); break
+          case '|Render':           nv1.setSliceType(nv1.sliceTypeRender); break
+          case '|MultiPlanar':      nv1.opts.multiplanarShowRender = niivue.SHOW_RENDER.NEVER;  nv1.setSliceType(nv1.sliceTypeMultiplanar); break
+          case '|MultiPlanarRender':nv1.opts.multiplanarShowRender = niivue.SHOW_RENDER.ALWAYS; nv1.setSliceType(nv1.sliceTypeMultiplanar); break
+        }
+        toggleGroup(id)
+      } else if (id.startsWith('^')) {
+        switch(id.slice(1)) {
+          case 'contrast':    nv1.opts.dragMode = nv1.dragModes.contrast; break
+          case 'measurement': nv1.opts.dragMode = nv1.dragModes.measurement; break
+          case 'pan':         nv1.opts.dragMode = nv1.dragModes.pan; break
+          case 'none':        nv1.opts.dragMode = nv1.dragModes.none; break
+        }
+        if (annotateMode) setAnnotateMode(false)
+        toggleGroup(id)
+      }
+    }
+  }
+
+  const btns = document.getElementsByClassName('viewBtn')
+  for (let i = 0; i < btns.length; i++) btns[i].addEventListener('click', onButtonClick)
+</script>
