@@ -17,6 +17,7 @@ export function Viewer({ doc, sidebarCollapsed, rightPanelOpen, onToggleRightPan
   const nv = doc.nvRef.current
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hasInit = useRef(false)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const hasBase = doc.volumes.length > 0
@@ -29,6 +30,7 @@ export function Viewer({ doc, sidebarCollapsed, rightPanelOpen, onToggleRightPan
 
   useEffect(() => {
     const c = canvasRef.current!
+    const container = containerRef.current!
     const ro = new ResizeObserver(([{ contentRect }]) => {
       const { width, height } = contentRect
       if (!width || !height) return
@@ -37,24 +39,28 @@ export function Viewer({ doc, sidebarCollapsed, rightPanelOpen, onToggleRightPan
         nv.attachToCanvas(c)
         registerViewSync(nv)
         nv.createEmptyDrawing() // one‐time allocate drawing texture
+        nv.resizeListener()
         nv.updateGLVolume()
         nv.drawScene()
         hasInit.current = true
       } else {
-        nv.gl!.viewport(0, 0, width, height)
-        nv.drawScene()
+        nv.resizeListener()
       }
     })
 
-    ro.observe(c)
+    ro.observe(container)
     return (): void => {
       ro.disconnect()
       hasInit.current = false
     }
-  }, [doc.id, sidebarCollapsed, nv])
+  }, [doc.id, sidebarCollapsed, rightPanelOpen, nv])
 
   return (
-    <div data-testid="viewer" className={`flex flex-col bg-black h-full ${sidebarCollapsed ? 'basis-5/6' : 'basis-2/3'}`}>
+    <div
+      ref={containerRef}
+      data-testid="viewer"
+      className={`flex flex-col bg-black h-full ${sidebarCollapsed ? 'basis-5/6' : 'basis-2/3'}`}
+    >
       <div className="h-12 bg-black flex items-center justify-end px-3 gap-2">
         {onToggleRightPanel && (
           <button
@@ -74,7 +80,7 @@ export function Viewer({ doc, sidebarCollapsed, rightPanelOpen, onToggleRightPan
         data-testid="viewer-canvas"
         id={`gl-canvas-${doc.id}`}
         ref={canvasRef}
-        className="w-full h-[calc(100%-48px)] block outline-none"
+        className="w-full flex-1 block outline-none"
       />
     </div>
   )

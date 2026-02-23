@@ -158,6 +158,7 @@ export const AppProvider = ({ children }: { children: ReactNode }): JSX.Element 
     selectDocument(docId)
     // …any post-init (prefs load, overrideDrawGraph)
     overrideDrawGraph(nv)
+    nv.graph.autoSizeMultiplanar = true
     nv.setSliceType(nv.sliceTypeMultiplanar)
     nv.drawScene()
     return doc

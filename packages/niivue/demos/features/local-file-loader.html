@@ -62,7 +62,11 @@
 
       main#container {
         display: flex; flex-grow: 1;
-        position: relative; background-color: black; min-height: 0;
+        position: relative; background-color: black;
+        min-height: 0;
+        min-width: 0;
+        width: 100%;
+        height: 100%;
       }
 
       canvas {
@@ -318,7 +322,7 @@
   const nv1 = new niivue.Niivue({
     dragAndDropEnabled: true,
     backColor: [0, 0, 0, 1],
-    textHeight: 0.03,
+    textHeight: 0.05,
     show3Dcrosshair: true,
     onLocationChange: (data) => {
       document.getElementById('intensity').innerHTML = '&nbsp;' + data.string
@@ -331,6 +335,7 @@
     },
   })
   nv1.opts.isColorbar    = false
+  nv1.opts.isResizeCanvas = true
   nv1.opts.legendTextColor = [1, 1, 1, 1]
   nv1.opts.fontColor       = [1, 1, 1, 1]
   nv1.opts.crosshairColor  = [0, 0.4, 1, 1]
@@ -344,6 +349,36 @@
   nv1.graph.autoSizeMultiplanar = true
   nv1.drawOpacity    = 0.3
   nv1.drawRimOpacity = 1.0
+
+  // ─── explicit canvas pixel-dimension sync ────────────────────────────────
+  // When embedded in an iframe the ResizeObserver may fire before layout is
+  // complete, leaving canvas.width/height at defaults (300×150).  We observe
+  // the container ourselves and always keep the canvas pixel dimensions in
+  // sync with its rendered size so NiiVue fills the viewport correctly.
+  const _container = document.getElementById('container')
+  const _canvas    = document.getElementById('gl1')
+
+  function syncCanvasSize () {
+    const w = _container.clientWidth
+    const h = _container.clientHeight
+    if (!w || !h) return
+    if (_canvas.width === w && _canvas.height === h) return
+    _canvas.width  = w
+    _canvas.height = h
+    nv1.resizeListener()
+  }
+
+  // Fire after two animation frames so the browser has completed layout
+  requestAnimationFrame(() => requestAnimationFrame(syncCanvasSize))
+
+  // Keep in sync whenever the container changes size (sidebar, window resize…)
+  const _ro = new ResizeObserver(syncCanvasSize)
+  _ro.observe(_container)
+
+  // Also handle postMessage from a parent frame that may resize the iframe
+  window.addEventListener('message', (ev) => {
+    if (ev.data && (ev.data.type === 'resize' || ev.data.type === 'init')) syncCanvasSize()
+  })
 
   // ─── file inputs ─────────────────────────────────────────────────────────
   document.getElementById('fileInputReplace').addEventListener('change', async (e) => {
