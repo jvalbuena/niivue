@@ -1,0 +1,413 @@
+---
+sidebar_position: 16
+---
+
+# Streamlit Integration
+
+This guide explains how to embed the NiiVue local-file-loader viewer inside a [Streamlit](https://streamlit.io) application, using the demo page built in `packages/niivue/demos/features/local-file-loader.html`.
+
+---
+
+## Overview
+
+NiiVue runs entirely in the browser using WebGL 2.0. Streamlit provides two mechanisms to embed arbitrary HTML/JavaScript:
+
+| Mechanism | Use when |
+|---|---|
+| `st.components.v1.iframe()` | You are running the NiiVue demo server alongside Streamlit (simplest) |
+| `st.components.v1.html()` | You want a fully self-contained Streamlit app with NiiVue inlined |
+| `st.components.v1.declare_component()` | You need two-way Python ↔ JavaScript communication (advanced) |
+
+For most use cases the **iframe approach** is the fastest path to a working integration. If you need to pass NIfTI files from Python and receive screenshots back, use **`declare_component`** (see [Approach 4](#approach-4--declare_component-python--niivue--python)).
+
+---
+
+## Prerequisites
+
+- Python ≥ 3.9 with `streamlit` installed (`pip install streamlit`)
+- Node.js ≥ 18 with the NiiVue repo cloned and dependencies installed
+
+```bash
+# Inside the NiiVue repo
+npm install
+npm run build:niivue   # produces demos/dist/index.js
+```
+
+---
+
+## Approach 1 — iframe embed (recommended)
+
+Run the NiiVue demo server and the Streamlit app side-by-side; Streamlit embeds the viewer in an `<iframe>`.
+
+### 1. Start the NiiVue demo server
+
+```bash
+# From the repo root (serves http://localhost:8080)
+npm run demo
+```
+
+### 2. Create the Streamlit app
+
+```python
+# app.py
+import streamlit as st
+import streamlit.components.v1 as components
+
+st.set_page_config(page_title="NiiVue Viewer", layout="wide")
+st.title("NiiVue — Local File Loader")
+
+st.info(
+    "Use the viewer controls below to open a local NIfTI, NRRD, MGH, or mesh file. "
+    "Drag-and-drop files directly onto the canvas, or use **File → Open File(s)…**"
+)
+
+# Embed the demo page in a responsive iframe
+components.iframe(
+    "http://localhost:8080/features/local-file-loader.html",
+    height=700,
+    scrolling=False,
+)
+```
+
+### 3. Run
+
+```bash
+streamlit run app.py
+```
+
+The NiiVue viewer will appear inside the Streamlit page. All drawing, annotation, and screenshot features work because they are handled entirely in the browser.
+
+---
+
+## Approach 2 — inline HTML component
+
+If you cannot run a separate server, you can inline the entire viewer HTML (including the NiiVue bundle) into the Streamlit page using `st.components.v1.html()`.
+
+Because the NiiVue JavaScript bundle references sibling paths (`../dist/index.js`), you must first produce a **self-contained HTML file** that has the bundle embedded as a data URL, or host the bundle separately and rewrite the import path.
+
+### Option A — Rewrite the import to a CDN or absolute URL
+
+Edit the `<script type="module">` import at the top of `local-file-loader.html`:
+
+```html
+<!-- Before -->
+import * as niivue from '../dist/index.js'
+
+<!-- After: point at your own static server or a versioned CDN release -->
+import * as niivue from 'https://your-host.example.com/niivue/dist/index.js'
+```
+
+Then read and serve the file from Python:
+
+```python
+import streamlit as st
+import streamlit.components.v1 as components
+from pathlib import Path
+
+HTML_PATH = Path("packages/niivue/demos/features/local-file-loader.html")
+html = HTML_PATH.read_text(encoding="utf-8")
+
+components.html(html, height=700, scrolling=False)
+```
+
+### Option B — Bundle with Vite/esbuild into a single file
+
+```bash
+# Example using vite build with inlineAssets (adjust as needed)
+npx vite build --outDir /tmp/niivue-single --base "./"
+```
+
+Then inline the resulting HTML file as in Option A.
+
+---
+
+## Approach 3 — File upload bridge (Python → NiiVue)
+
+When you want Streamlit to control which file is displayed (e.g., selected from a study list), use `st.file_uploader` to receive the file in Python, then pass it to the NiiVue viewer via a temporary in-memory HTTP endpoint or as a base64 data URL.
+
+### Architecture
+
+```
+Streamlit UI
+  └─ st.file_uploader  ─── bytes ──►  Python handler
+                                          │
+                               serve via st.session_state
+                               as a temporary URL
+                                          │
+                               NiiVue iframe calls
+                               nv1.loadFromUrl(url)
+```
+
+### Implementation sketch
+
+#### Serve the uploaded file temporarily
+
+```python
+# serve_upload.py  — minimal Flask or http.server bridge
+# (run as a subprocess from your Streamlit app or as a separate process)
+
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading, io
+
+_buffer: bytes = b""
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(_buffer)
+    def log_message(self, *args):  # silence access logs
+        pass
+
+def start(port=9876):
+    HTTPServer(("localhost", port), Handler).serve_forever()
+
+def set_data(data: bytes):
+    global _buffer
+    _buffer = data
+```
+
+#### Streamlit app
+
+```python
+import streamlit as st
+import streamlit.components.v1 as components
+import threading
+import serve_upload  # module above
+
+# Start the file-bridge server once
+if "bridge_started" not in st.session_state:
+    threading.Thread(target=serve_upload.start, daemon=True).start()
+    st.session_state.bridge_started = True
+
+uploaded = st.file_uploader("Choose a NIfTI or mesh file", type=["nii", "nii.gz", "nrrd", "mgh", "gii", "mz3"])
+
+if uploaded:
+    serve_upload.set_data(uploaded.read())
+
+    # Inject a small script that tells NiiVue to load from the bridge URL
+    html = f"""
+    <script type="module">
+      import * as niivue from 'http://localhost:8080/dist/index.js';
+      const nv = new niivue.Niivue();
+      await nv.attachTo('gl1');
+      await nv.loadVolumes([{{ url: 'http://localhost:9876/' }}]);
+    </script>
+    <canvas id="gl1" style="width:100%;height:650px;display:block"></canvas>
+    """
+    components.html(html, height=680)
+```
+
+> **Note:** This sketch requires CORS to be allowed on the bridge server (the `Access-Control-Allow-Origin: *` header above satisfies that). For production, replace the in-memory bridge with a proper file storage solution (e.g., S3 pre-signed URLs or a FastAPI endpoint).
+
+---
+
+## Approach 4 — `declare_component` (Python → NiiVue → Python)
+
+Use this approach when you need full two-way communication: Python selects the file, the component renders and annotates it, and annotated screenshots are returned to Python (e.g., stored in a database).
+
+### Directory structure
+
+```
+my_component/
+  __init__.py
+  frontend/
+    index.html        ← viewer + Streamlit messaging layer
+    dist/
+      index.js        ← NiiVue bundle (bundled locally — see below)
+```
+
+### Bundle NiiVue locally
+
+Avoid loading NiiVue from a CDN at runtime. Hospital/institution networks often have strict egress filtering, and a CDN import adds latency. Download the bundle once:
+
+```bash
+mkdir -p my_component/frontend/dist
+curl -sL "https://cdn.jsdelivr.net/npm/@niivue/niivue@0.44.0/dist/index.js" \
+  -o my_component/frontend/dist/index.js
+```
+
+Then import locally in `frontend/index.html`:
+
+```html
+<script type="module">
+  import * as niivue from './dist/index.js'
+  ...
+</script>
+```
+
+### `__init__.py`
+
+```python
+import streamlit.components.v1 as components
+import os
+
+_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+_component = components.declare_component("niivue_viewer", path=_dir)
+
+def niivue_viewer(nifti_b64: str, modality: str, participant_id: str, key=None):
+    return _component(
+        nifti_b64=nifti_b64,
+        modality=modality,
+        participant_id=participant_id,
+        key=key,
+        default=None,
+    )
+```
+
+### Streamlit messaging — critical requirements
+
+There are three **non-obvious requirements** for custom components in Streamlit 1.36+:
+
+#### 1. `isStreamlitMessage: true` in every postMessage (breaking change in 1.36+)
+
+Streamlit's `ComponentRegistry` silently drops any `postMessage` that does not include `isStreamlitMessage: true`. This is not documented in the component tutorial. Every message must include it:
+
+```javascript
+// ✗ WRONG — message is silently dropped by Streamlit 1.36+
+window.parent.postMessage({ type: 'streamlit:componentReady', apiVersion: 1 }, '*')
+
+// ✓ CORRECT
+window.parent.postMessage({ isStreamlitMessage: true, type: 'streamlit:componentReady', apiVersion: 1 }, '*')
+```
+
+This applies to all three message types:
+
+```javascript
+function sendReady() {
+  window.parent.postMessage({ isStreamlitMessage: true, type: 'streamlit:componentReady', apiVersion: 1 }, '*')
+}
+function setFrameHeight() {
+  window.parent.postMessage({ isStreamlitMessage: true, type: 'streamlit:setFrameHeight', height: document.body.scrollHeight }, '*')
+}
+function sendComponentValue(value) {
+  window.parent.postMessage({ isStreamlitMessage: true, type: 'streamlit:setComponentValue', value }, '*')
+}
+```
+
+#### 2. Place scripts inside `<body>`, not after `</html>`
+
+Scripts placed after the closing `</html>` tag may be silently dropped inside a sandboxed iframe. Always place both the bootstrap script and the module script as the last children of `<body>`:
+
+```html
+  <body>
+    <!-- ... your UI elements ... -->
+
+    <script>
+      /* sync bootstrap — runs immediately */
+      window.parent.postMessage({ isStreamlitMessage: true, type: 'streamlit:componentReady', apiVersion: 1 }, '*')
+    </script>
+
+    <script type="module">
+      import * as niivue from './dist/index.js'
+      /* ... rest of your component ... */
+    </script>
+  </body>
+</html>
+```
+
+#### 3. Buffer `streamlit:render` before the module loads
+
+`<script type="module">` is deferred — it runs after HTML parsing. If `streamlit:render` arrives during module load (e.g., while the 4 MB NiiVue bundle is being parsed), it will be missed. Buffer it in the sync bootstrap:
+
+```javascript
+// In the sync bootstrap <script>:
+window.__niivuePendingRender = null
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'streamlit:render' && e.data.args) {
+    window.__niivuePendingRender = e.data.args
+  }
+})
+```
+
+Then flush at module post-init:
+
+```javascript
+// At the end of the module, after await nv1.attachTo('gl1'):
+nvReady = true
+const boot = pendingArgs || window.__niivuePendingRender
+if (boot) { loadFromBase64(boot); window.__niivuePendingRender = null }
+```
+
+### Loading NIfTI from base64
+
+Use `NVImage.loadFromBase64()` — the async static factory method. The plain `NVImage` constructor does **not** parse NIfTI data; it only creates an empty object.
+
+```javascript
+// ✗ WRONG — constructor does not parse NIfTI
+const img = new niivue.NVImage(arrayBuffer, 'scan.nii.gz')
+await nv1.addVolume(img)  // adds an empty image
+
+// ✓ CORRECT — static factory reads and decodes NIfTI headers
+const img = await niivue.NVImage.loadFromBase64({
+  base64: nifti_b64,
+  name: 'scan.nii.gz',
+  colormap: 'gray',
+  opacity: 1.0
+})
+await nv1.addVolume(img)
+```
+
+Alternatively, decode first and use the `Niivue` instance method:
+
+```javascript
+await nv1.loadFromArrayBuffer(arrayBuffer, 'scan.nii.gz')
+```
+
+### Returning annotated screenshots to Python
+
+After compositing the WebGL frame and SVG annotations into a single canvas:
+
+```javascript
+const b64 = compositeCanvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '')
+window.parent.postMessage({
+  isStreamlitMessage: true,
+  type: 'streamlit:setComponentValue',
+  value: { action: 'save_snapshot', image_data: b64, modality, view_type, annotations }
+}, '*')
+```
+
+```python
+result = niivue_viewer(nifti_b64, modality, participant_id, key=...)
+if result and result.get("action") == "save_snapshot":
+    # result["image_data"] is the base64 PNG
+    save_to_database(result)
+```
+
+---
+
+## Annotation feature
+
+The Annotate menu in `local-file-loader.html` is implemented as a transparent SVG overlay over the WebGL canvas. All annotation state lives in the browser — no server round-trip is needed.
+
+When a user clicks **File → Screenshot**, the viewer composites the WebGL frame and the SVG arrows into a single PNG and downloads it. In a Streamlit integration this download goes directly to the user's browser, bypassing Python entirely.
+
+If you need the annotated image back in Python (e.g., to store it in a database), you can use `declare_component` to post the base64 PNG from JavaScript to the Streamlit backend:
+
+```javascript
+// Inside the component's JS, after building the composite canvas:
+const Streamlit = window.parent.Streamlit   // injected by st.components
+Streamlit.setComponentValue(out.toDataURL('image/png'))
+```
+
+```python
+# In the Streamlit app:
+import base64, io
+from PIL import Image
+
+b64 = components.declare_component("niivue", url="http://localhost:8080/features/local-file-loader.html")
+if b64:
+    data = base64.b64decode(b64.split(",")[1])
+    img  = Image.open(io.BytesIO(data))
+    st.image(img, caption="Annotated screenshot")
+```
+
+---
+
+## Security considerations
+
+- Do **not** expose the NiiVue demo server (`npm run demo`) to the public internet. It is a development server with no authentication.
+- For production deployments, build the NiiVue bundle and serve it via a hardened static file server (e.g., nginx with appropriate Content-Security-Policy headers).
+- The file-bridge server in Approach 3 must be firewalled to `localhost` only.
